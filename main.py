@@ -1,6 +1,5 @@
 import streamlit as st
 import asyncio
-import random
 from datetime import datetime, timedelta
 from telethon import TelegramClient
 from telethon.tl.types import Chat, Channel
@@ -12,11 +11,9 @@ api_id = st.sidebar.text_input("API ID", value="", type="default")
 api_hash = st.sidebar.text_input("API Hash", value="", type="password")
 session_name = 'userbot_session'
 
-# Перевірка наявності API ID та API Hash
 if not api_id or not api_hash:
     st.error("❌ Введіть API ID та API Hash у лівій панелі.")
     st.stop()
-
 
 st.title("🔍 Сканування Telegram груп за ключовими словами та датами")
 st.markdown("Знаходить повідомлення з ключовими словами у всіх групах, де ви є учасником. Працює з фільтром по датах.")
@@ -28,7 +25,6 @@ if uploaded_file is not None:
 else:
     keywords_input = st.text_input("Ключові слова (через кому):", "")
 
-# Вибір режиму пошуку за датами
 search_mode = st.radio("🔍 Режим пошуку за датою:", ("Одна дата", "Діапазон дат"))
 
 if search_mode == "Одна дата":
@@ -49,6 +45,12 @@ local_tz = pytz.timezone('Europe/Kiev')
 start_date = local_tz.localize(start_date)
 end_date = local_tz.localize(end_date)
 
+# Введення назви закритої групи
+target_group_name = st.text_input("🔁 Назва закритої групи, куди надсилати результати", "")
+if not target_group_name:
+    st.error("❌ Введіть точну назву цільової групи.")
+    st.stop()
+
 if st.button("🔍 Сканувати всі групи"):
     if uploaded_file is not None:
         keywords = [k.strip().lower() for k in keywords_input.split("\n") if k.strip()]
@@ -56,7 +58,7 @@ if st.button("🔍 Сканувати всі групи"):
         keywords = [k.strip().lower() for k in keywords_input.split(",")]
 
     st.write(f"📝 Шукаємо за ключовими словами: {keywords}")
-    placeholder = st.empty()  # Місце для лічильника
+    placeholder = st.empty()
 
     async def main_with_progress():
         found_count = 0
@@ -72,6 +74,18 @@ if st.button("🔍 Сканувати всі групи"):
             )
         ]
 
+        # Знаходимо цільову групу серед діалогів
+        target_entity = None
+        for dialog in dialogs:
+            if dialog.name.strip().lower() == target_group_name.strip().lower():
+                target_entity = dialog.entity
+                break
+
+        if not target_entity:
+            st.error("❌ Не знайдено групу з такою назвою серед діалогів.")
+            await client.disconnect()
+            return 0
+
         wait_interval = 1
 
         for group_name, entity in groups:
@@ -82,11 +96,8 @@ if st.button("🔍 Сканувати всі групи"):
 
                     msg_date = message.date.astimezone(local_tz)
 
-                    # Пропускаємо повідомлення, що новіші за кінець
                     if msg_date > end_date:
                         continue
-
-                    # Зупиняємо цикл, якщо повідомлення старше початку
                     if msg_date < start_date:
                         break
 
@@ -102,21 +113,21 @@ if st.button("🔍 Сканувати всі групи"):
                             found_count += 1
                             placeholder.info(f"🔎 Знайдено повідомлень: {found_count}")
 
-                            msg_to_save = (
+                            msg_to_send = (
                                 f"📍 Група: {group_name}\n"
                                 f"👤 Від: {author}\n"
                                 f"📅 Дата: {msg_date.strftime('%Y-%m-%d %H:%M')}\n"
                                 f"📩 Повідомлення:\n{message.text}"
                             )
                             try:
-                                await client.send_message("me", msg_to_save)
+                                await client.send_message(target_entity, msg_to_send)
                                 await asyncio.sleep(wait_interval)
                                 wait_interval = min(wait_interval * 1.5, 10)
                             except Exception as send_error:
                                 print(f"❌ Не вдалося надіслати повідомлення: {send_error}")
                                 await asyncio.sleep(10)
                                 try:
-                                    await client.send_message("me", msg_to_save)
+                                    await client.send_message(target_entity, msg_to_send)
                                 except Exception as retry_error:
                                     print(f"❌ Повторна спроба не вдалася: {retry_error}")
             except Exception as e:
